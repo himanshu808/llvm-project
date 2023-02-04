@@ -65,6 +65,12 @@ static cl::opt<unsigned> NumRepeatedDivisors(
              "transformation to multiplications by the reciprocal"),
     cl::init(2));
 
+static cl::opt<int>
+    FPImmCost(DEBUG_TYPE "-fpimm-cost", cl::Hidden,
+              cl::desc("Give the maximum number of instructions that we will "
+                       "use for creating a floating-point immediate value"),
+              cl::init(2));
+
 RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
                                          const RISCVSubtarget &STI)
     : TargetLowering(TM), Subtarget(STI) {
@@ -1456,7 +1462,20 @@ bool RISCVTargetLowering::isFPImmLegal(const APFloat &Imm, EVT VT,
     return false;
   if (VT == MVT::f64 && !Subtarget.hasStdExtD())
     return false;
-  return Imm.isZero();
+  // Cannot create a 64 bit floating-point immediate value for rv32.
+  if (Subtarget.getXLen() < VT.getScalarSizeInBits()) {
+    // td can handle +0.0 or -0.0 already.
+    // -0.0 can be created by fmv + fneg.
+    return Imm.isZero();
+  }
+  // Special case: the cost for -0.0 is 1.
+  int Cost = Imm.isNegZero()
+                 ? 1
+                 : RISCVMatInt::getIntMatCost(Imm.bitcastToAPInt(),
+                                              Subtarget.getXLen(),
+                                              Subtarget.getFeatureBits());
+  // If the constantpool data is already in cache, only Cost 1 is cheaper.
+  return Cost < FPImmCost;
 }
 
 // TODO: This is very conservative.
@@ -5515,7 +5534,7 @@ static SDValue lowerVectorIntrinsicScalars(SDValue Op, SelectionDAG &DAG,
         unsigned Sew = RISCVVType::encodeSEW(I32VT.getScalarSizeInBits());
         SDValue SEW = DAG.getConstant(Sew, DL, XLenVT);
         SDValue SETVLMAX = DAG.getTargetConstant(
-            Intrinsic::riscv_vsetvlimax_opt, DL, MVT::i32);
+            Intrinsic::riscv_vsetvlimax, DL, MVT::i32);
         I32VL = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, XLenVT, SETVLMAX, SEW,
                             LMUL);
       } else {
@@ -5530,7 +5549,7 @@ static SDValue lowerVectorIntrinsicScalars(SDValue Op, SelectionDAG &DAG,
       unsigned Sew = RISCVVType::encodeSEW(VT.getScalarSizeInBits());
       SDValue SEW = DAG.getConstant(Sew, DL, XLenVT);
       SDValue SETVL =
-          DAG.getTargetConstant(Intrinsic::riscv_vsetvli_opt, DL, MVT::i32);
+          DAG.getTargetConstant(Intrinsic::riscv_vsetvli, DL, MVT::i32);
       // Using vsetvli instruction to get actually used length which related to
       // the hardware implementation
       SDValue VL = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, XLenVT, SETVL, AVL,
@@ -10884,8 +10903,6 @@ void RISCVTargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
       break;
     case Intrinsic::riscv_vsetvli:
     case Intrinsic::riscv_vsetvlimax:
-    case Intrinsic::riscv_vsetvli_opt:
-    case Intrinsic::riscv_vsetvlimax_opt:
       // Assume that VL output is >= 65536.
       // TODO: Take SEW and LMUL into account.
       if (BitWidth > 17)

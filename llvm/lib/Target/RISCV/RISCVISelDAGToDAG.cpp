@@ -542,13 +542,10 @@ void RISCVDAGToDAGISel::selectVSETVLI(SDNode *Node) {
   unsigned IntNo = Node->getConstantOperandVal(IntNoOffset);
 
   assert((IntNo == Intrinsic::riscv_vsetvli ||
-          IntNo == Intrinsic::riscv_vsetvlimax ||
-          IntNo == Intrinsic::riscv_vsetvli_opt ||
-          IntNo == Intrinsic::riscv_vsetvlimax_opt) &&
+          IntNo == Intrinsic::riscv_vsetvlimax) &&
          "Unexpected vsetvli intrinsic");
 
-  bool VLMax = IntNo == Intrinsic::riscv_vsetvlimax ||
-               IntNo == Intrinsic::riscv_vsetvlimax_opt;
+  bool VLMax = IntNo == Intrinsic::riscv_vsetvlimax;
   unsigned Offset = IntNoOffset + (VLMax ? 1 : 2);
 
   assert(Node->getNumOperands() == Offset + 2 &&
@@ -710,6 +707,38 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
       Imm = SignExtend64<32>(Imm);
 
     ReplaceNode(Node, selectImm(CurDAG, DL, VT, Imm, *Subtarget));
+    return;
+  }
+  case ISD::ConstantFP: {
+    unsigned BitSize = VT.getSizeInBits().getFixedValue();
+    const APFloat &APF = cast<ConstantFPSDNode>(Node)->getValueAPF();
+    // td can handle +0.0 already.
+    if (APF.isPosZero())
+      break;
+    // Special case: a 64 bit -0.0 uses more instructions than fmv + fneg.
+    if (APF.isNegZero() && BitSize == 64)
+      break;
+    assert((BitSize <= Subtarget->getXLen()) &&
+           "Cannot create a 64 bit floating-point immediate value for rv32");
+    SDValue Imm =
+        SDValue(selectImm(CurDAG, DL, XLenVT,
+                          APF.bitcastToAPInt().getSExtValue(), *Subtarget),
+                0);
+    unsigned Opc;
+    switch (BitSize) {
+    default:
+      llvm_unreachable("Unexpected size");
+    case 16:
+      Opc = RISCV::FMV_H_X;
+      break;
+    case 32:
+      Opc = RISCV::FMV_W_X;
+      break;
+    case 64:
+      Opc = RISCV::FMV_D_X;
+      break;
+    }
+    ReplaceNode(Node, CurDAG->getMachineNode(Opc, DL, VT, Imm));
     return;
   }
   case ISD::SHL: {
@@ -1287,8 +1316,8 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
                                                {Cmp, Mask, VL, MaskSEW}));
       return;
     }
-    case Intrinsic::riscv_vsetvli_opt:
-    case Intrinsic::riscv_vsetvlimax_opt:
+    case Intrinsic::riscv_vsetvli:
+    case Intrinsic::riscv_vsetvlimax:
       return selectVSETVLI(Node);
     }
     break;
@@ -1299,9 +1328,6 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
       // By default we do not custom select any intrinsic.
     default:
       break;
-    case Intrinsic::riscv_vsetvli:
-    case Intrinsic::riscv_vsetvlimax:
-      return selectVSETVLI(Node);
     case Intrinsic::riscv_vlseg2:
     case Intrinsic::riscv_vlseg3:
     case Intrinsic::riscv_vlseg4:
@@ -2557,6 +2583,22 @@ bool RISCVDAGToDAGISel::selectVSplatUimm5(SDValue N, SDValue &SplatVal) {
   SplatVal =
       CurDAG->getTargetConstant(SplatImm, SDLoc(N), Subtarget->getXLenVT());
 
+  return true;
+}
+
+bool RISCVDAGToDAGISel::selectFPImm(SDValue N, SDValue &Imm) {
+  ConstantFPSDNode *CFP = dyn_cast<ConstantFPSDNode>(N.getNode());
+  if (!CFP)
+    return false;
+  const APFloat &APF = CFP->getValueAPF();
+  // td can handle +0.0 already.
+  if (APF.isPosZero())
+    return false;
+  SDLoc DL(N);
+  MVT XLenVT = Subtarget->getXLenVT();
+  Imm = SDValue(selectImm(CurDAG, DL, XLenVT,
+                          APF.bitcastToAPInt().getSExtValue(), *Subtarget),
+                0);
   return true;
 }
 
