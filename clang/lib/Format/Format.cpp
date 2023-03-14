@@ -3525,6 +3525,10 @@ reformat(const FormatStyle &Style, StringRef Code,
     }
   }
 
+  if (Style.isTableGen()) {
+
+  }
+
   if (Style.SeparateDefinitionBlocks != FormatStyle::SDS_Leave) {
     Passes.emplace_back([&](const Environment &Env) {
       return DefinitionBlockSeparator(Env, Expanded).process();

@@ -2763,6 +2763,7 @@ struct FormatStyle {
   bool isJavaScript() const { return Language == LK_JavaScript; }
   bool isVerilog() const { return Language == LK_Verilog; }
   bool isProto() const { return Language == LK_Proto; }
+  bool isTableGen() const { return Language == LK_TableGen; }
 
   /// Language, this format style is targeted at.
   /// \version 3.5
