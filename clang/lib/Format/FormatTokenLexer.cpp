@@ -1314,10 +1314,24 @@ void FormatTokenLexer::readRawToken(FormatToken &Tok) {
   if (Tok.is(tok::comment) && isClangFormatOn(Tok.TokenText))
     FormattingDisabled = false;
 
+  if (Style.isTableGen() && Tok.is(tok::r_square)) {
+      FormatToken *Previous = Tokens.back();
+      if (Previous && Previous->is(tok::r_brace)) {
+          FormattingDisabled = false;
+      }
+  }
+
   Tok.Finalized = FormattingDisabled;
 
   if (Tok.is(tok::comment) && isClangFormatOff(Tok.TokenText))
     FormattingDisabled = true;
+
+  if (Style.isTableGen() && Tok.is(tok::l_brace)) {
+      FormatToken *Previous = Tokens.back();
+      if (Previous && Previous->is(tok::l_square)) {
+          FormattingDisabled = true;
+      }
+  }
 }
 
 void FormatTokenLexer::resetLexer(unsigned Offset) {
