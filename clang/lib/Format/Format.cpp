@@ -3526,7 +3526,21 @@ reformat(const FormatStyle &Style, StringRef Code,
   }
 
   if (Style.isTableGen()) {
+    if (Style.InsertBraces) {
+      FormatStyle S = Expanded;
+      S.InsertBraces = true;
+      Passes.emplace_back([&, S](const Environment &Env) {
+        return BracesInserter(Env, S).process(/*SkipAnnotation=*/true);
+      });
+    }
 
+    if (Style.RemoveBracesLLVM) {
+      FormatStyle S = Expanded;
+      S.RemoveBracesLLVM = true;
+      Passes.emplace_back([&, S](const Environment &Env) {
+        return BracesRemover(Env, S).process(/*SkipAnnotation=*/true);
+      });
+    }
   }
 
   if (Style.SeparateDefinitionBlocks != FormatStyle::SDS_Leave) {
