@@ -1166,6 +1166,8 @@ struct AdditionalKeywords {
 
     // TableGen keywords
     kw_def = &IdentTable.get("def");
+    kw_then = &IdentTable.get("then");
+    kw_multiclass = &IdentTable.get("multiclass");
 
     // Keep this at the end of the constructor to make sure everything here
     // is
@@ -1322,7 +1324,7 @@ struct AdditionalKeywords {
                                               kw_verilogHashHash});
 
     TableGenExtraKeywords =
-        std::unordered_set<IdentifierInfo *>({ kw_def });
+        std::unordered_set<IdentifierInfo *>({ kw_def, kw_then, kw_multiclass });
   }
 
   // Context sensitive keywords.
@@ -1566,6 +1568,8 @@ struct AdditionalKeywords {
 
   // TableGen keywords
   IdentifierInfo * kw_def;
+  IdentifierInfo * kw_then;
+  IdentifierInfo * kw_multiclass;
 
   /// Returns \c true if \p Tok is a keyword or an identifier.
   bool isWordLike(const FormatToken &Tok) const {

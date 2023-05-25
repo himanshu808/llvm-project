@@ -1609,6 +1609,10 @@ void UnwrappedLineParser::parseStructuralElement(
       parseNamespace();
       return;
     }
+    if (Style.isTableGen() && FormatTok->isOneOf(Keywords.kw_foreach, Keywords.kw_let)) {
+      parseForOrWhileLoop();
+      return;
+    }
     // In all other cases, parse the declaration.
     break;
   default:
@@ -1884,7 +1888,7 @@ void UnwrappedLineParser::parseStructuralElement(
         break;
       }
 
-      if (Style.isTableGen() && FormatTok->is(Keywords.kw_def)) {
+      if (Style.isTableGen() && FormatTok->isOneOf(Keywords.kw_def, Keywords.kw_multiclass)) {
         addUnwrappedLine();
         if (parseStructLike())
           return;
@@ -2410,8 +2414,15 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
 /// \param AmpAmpTokenType If different than TT_Unknown sets this type for all
 /// double ampersands. This only counts for the current parens scope.
 void UnwrappedLineParser::parseParens(TokenType AmpAmpTokenType) {
-  assert(FormatTok->is(tok::l_paren) && "'(' expected.");
-  nextToken();
+  bool needClose = true;
+
+  if (!(Style.isTableGen() && FormatTok->Previous->is(tok::kw_if)) || FormatTok->is(tok::l_paren)) {
+    assert(FormatTok->is(tok::l_paren) && "'(' expected.");
+    nextToken();
+  }
+  else if(Style.isTableGen())
+      needClose = false;
+
   do {
     switch (FormatTok->Tok.getKind()) {
     case tok::l_paren:
@@ -2421,6 +2432,7 @@ void UnwrappedLineParser::parseParens(TokenType AmpAmpTokenType) {
       break;
     case tok::r_paren:
       nextToken();
+      if (!needClose) break;
       return;
     case tok::r_brace:
       // A "}" inside parenthesis is an error if there wasn't a matching "{".
@@ -2452,6 +2464,10 @@ void UnwrappedLineParser::parseParens(TokenType AmpAmpTokenType) {
         nextToken();
       break;
     case tok::identifier:
+      if (Style.isTableGen() && FormatTok->is(Keywords.kw_then)) {
+        nextToken();
+        return;
+      }
       if (Style.isJavaScript() &&
           (FormatTok->is(Keywords.kw_function) ||
            FormatTok->startsSequence(Keywords.kw_async,
@@ -2624,7 +2640,7 @@ FormatToken *UnwrappedLineParser::parseIfThenElse(IfStmtKind *IfKind,
                                                   bool KeepBraces) {
   assert(FormatTok->is(tok::kw_if) && "'if' expected");
   nextToken();
-  if (FormatTok->is(tok::exclaim))
+  if (FormatTok->is(tok::exclaim) && !Style.isTableGen())
     nextToken();
 
   bool KeepIfBraces = true;
@@ -2632,10 +2648,15 @@ FormatToken *UnwrappedLineParser::parseIfThenElse(IfStmtKind *IfKind,
     nextToken();
   } else {
     KeepIfBraces = !Style.RemoveBracesLLVM || KeepBraces;
-    if (FormatTok->isOneOf(tok::kw_constexpr, tok::identifier))
-      nextToken();
-    if (FormatTok->is(tok::l_paren))
-      parseParens();
+    if (Style.isTableGen()) {
+        parseParens();
+    }
+    else {
+      if (FormatTok->isOneOf(tok::kw_constexpr, tok::identifier))
+        nextToken();
+      if (FormatTok->is(tok::l_paren))
+        parseParens();
+    }
   }
   handleAttributes();
 
@@ -2973,10 +2994,17 @@ void UnwrappedLineParser::parseLoopBody(bool KeepBraces, bool WrapRightBrace) {
 }
 
 void UnwrappedLineParser::parseForOrWhileLoop() {
-  assert(FormatTok->isOneOf(tok::kw_for, tok::kw_while, TT_ForEachMacro) &&
+  if (!Style.isTableGen()) {
+    assert(FormatTok->isOneOf(tok::kw_for, tok::kw_while, TT_ForEachMacro) &&
          "'for', 'while' or foreach macro expected");
+  }
+  else {
+    assert(FormatTok->isOneOf(Keywords.kw_foreach, Keywords.kw_let) &&
+         "'for', 'while' or foreach macro expected");
+  }
+
   const bool KeepBraces = !Style.RemoveBracesLLVM ||
-                          !FormatTok->isOneOf(tok::kw_for, tok::kw_while);
+                          !FormatTok->isOneOf(tok::kw_for, tok::kw_while, Keywords.kw_foreach, Keywords.kw_let);
 
   nextToken();
   // JS' for await ( ...
@@ -2988,6 +3016,15 @@ void UnwrappedLineParser::parseForOrWhileLoop() {
     parseParens();
 
   handleAttributes();
+
+  bool isSemi = false;
+  if (Style.isTableGen()) {
+      while (!FormatTok->isOneOf(tok::eof, Keywords.kw_in, tok::semi)) nextToken();
+      if (FormatTok->is(Keywords.kw_in)) nextToken();
+      else if (FormatTok->is(tok::semi)) {isSemi = true;}
+  }
+  if(isSemi) return;
+
   parseLoopBody(KeepBraces, /*WrapRightBrace=*/true);
 }
 
@@ -3589,7 +3626,7 @@ bool UnwrappedLineParser::parseStructLike() {
   parseRecord();
   // This does not apply to Java, JavaScript and C#.
   if (Style.Language == FormatStyle::LK_Java || Style.isJavaScript() ||
-      Style.isCSharp()) {
+      Style.isCSharp() || Style.isTableGen()) {
     if (FormatTok->is(tok::semi))
       nextToken();
     addUnwrappedLine();
@@ -4212,6 +4249,10 @@ bool UnwrappedLineParser::containsExpansion(const UnwrappedLine &Line) const {
 }
 
 void UnwrappedLineParser::addUnwrappedLine(LineLevel AdjustLevel) {
+  if(Style.isTableGen() && FormatTok->is(tok::hash)) {
+    return;
+  }
+
   if (Line->Tokens.empty())
     return;
   LLVM_DEBUG({
