@@ -2640,7 +2640,7 @@ FormatToken *UnwrappedLineParser::parseIfThenElse(IfStmtKind *IfKind,
                                                   bool KeepBraces) {
   assert(FormatTok->is(tok::kw_if) && "'if' expected");
   nextToken();
-  if (FormatTok->is(tok::exclaim) && !Style.isTableGen())
+  if (FormatTok->is(tok::exclaim))
     nextToken();
 
   bool KeepIfBraces = true;
