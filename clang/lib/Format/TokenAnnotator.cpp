@@ -992,9 +992,7 @@ private:
           break;
         }
       }
-      // Check this
       else if (Style.isTableGen()) {
-//          Tok->setType(TT_DictLiteral);
           break;
       }
       else if (Style.isCSharp()) {

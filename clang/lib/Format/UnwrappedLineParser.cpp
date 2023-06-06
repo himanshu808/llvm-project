@@ -2692,7 +2692,7 @@ FormatToken *UnwrappedLineParser::parseIfThenElse(IfStmtKind *IfKind,
   }
 
   // Handle `if !consteval`.
-  if (FormatTok->is(tok::exclaim) && !Style.isTableGen())
+  if (FormatTok->is(tok::exclaim))
     nextToken();
 
   bool KeepIfBraces = true;
