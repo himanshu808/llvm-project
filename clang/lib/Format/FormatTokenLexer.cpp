@@ -267,6 +267,44 @@ void FormatTokenLexer::tryMergePreviousTokens() {
       return;
     }
   }
+
+  if (Style.isTableGen()) {
+    if (FormatTok->TokenText.startswith("$")) {
+      if (tryMergeTokens({tok::identifier, tok::colon, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("define")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_ObjCDecl)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("ifdef")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_MacroBlockBegin)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("ifndef")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_MacroBlockEnd)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (Tokens.size() > 1 && Tokens.rbegin()[1]->is(tok::exclaim)
+            && FormatTok->isOneOf(tok::identifier, tok::kw_if)) {
+      if (tryMergeTokens({tok::exclaim, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+      else if (tryMergeTokens({tok::exclaim, tok::kw_if}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+  }
 }
 
 bool FormatTokenLexer::tryMergeNSStringLiteral() {
@@ -523,7 +561,7 @@ bool FormatTokenLexer::tryMergeTokens(size_t Count, TokenType NewType) {
   for (size_t i = 1; i < Count; ++i) {
     // If there is whitespace separating the token and the previous one,
     // they should not be merged.
-    if (First[i]->hasWhitespaceBefore())
+    if (First[i]->hasWhitespaceBefore() && !Style.isTableGen())
       return false;
     AddLength += First[i]->TokenText.size();
   }
@@ -1314,10 +1352,24 @@ void FormatTokenLexer::readRawToken(FormatToken &Tok) {
   if (Tok.is(tok::comment) && isClangFormatOn(Tok.TokenText))
     FormattingDisabled = false;
 
+  if (Style.isTableGen() && Tok.is(tok::r_square)) {
+      FormatToken *Previous = Tokens.back();
+      if (Previous && Previous->is(tok::r_brace)) {
+          FormattingDisabled = false;
+      }
+  }
+
   Tok.Finalized = FormattingDisabled;
 
   if (Tok.is(tok::comment) && isClangFormatOff(Tok.TokenText))
     FormattingDisabled = true;
+
+  if (Style.isTableGen() && Tok.is(tok::l_brace)) {
+      FormatToken *Previous = Tokens.back();
+      if (Previous && Previous->is(tok::l_square)) {
+          FormattingDisabled = true;
+      }
+  }
 }
 
 void FormatTokenLexer::resetLexer(unsigned Offset) {

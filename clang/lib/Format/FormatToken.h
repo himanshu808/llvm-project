@@ -1177,6 +1177,12 @@ struct AdditionalKeywords {
     kw_verilogHashHash = &IdentTable.get("##");
     kw_apostrophe = &IdentTable.get("\'");
 
+    // TableGen keywords
+    kw_def = &IdentTable.get("def");
+    kw_then = &IdentTable.get("then");
+    kw_multiclass = &IdentTable.get("multiclass");
+    kw_defvar = &IdentTable.get("defvar");
+
     // Keep this at the end of the constructor to make sure everything here
     // is
     // already initialized.
@@ -1269,6 +1275,11 @@ struct AdditionalKeywords {
          kw_wildcard,     kw_wire,
          kw_with,         kw_wor,
          kw_verilogHash,  kw_verilogHashHash});
+
+    TableGenExtraKeywords =
+        std::unordered_set<IdentifierInfo *>({ kw_def, kw_then,
+                                               kw_multiclass,
+                                               kw_defvar });
   }
 
   // Context sensitive keywords.
@@ -1513,6 +1524,12 @@ struct AdditionalKeywords {
 
   // Symbols in Verilog that don't exist in C++.
   IdentifierInfo *kw_apostrophe;
+
+  // TableGen keywords
+  IdentifierInfo * kw_def;
+  IdentifierInfo * kw_then;
+  IdentifierInfo * kw_multiclass;
+  IdentifierInfo * kw_defvar;
 
   /// Returns \c true if \p Tok is a keyword or an identifier.
   bool isWordLike(const FormatToken &Tok) const {
@@ -1795,6 +1812,9 @@ private:
 
   /// The Verilog keywords beyond the C++ keyword set.
   std::unordered_set<IdentifierInfo *> VerilogExtraKeywords;
+
+  /// The TableGen keywords beyond the C++ keyword set.
+  std::unordered_set<IdentifierInfo *> TableGenExtraKeywords;
 };
 
 inline bool isLineComment(const FormatToken &FormatTok) {

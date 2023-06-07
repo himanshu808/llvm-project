@@ -991,7 +991,11 @@ private:
           Tok->setType(TT_JsTypeColon);
           break;
         }
-      } else if (Style.isCSharp()) {
+      }
+      else if (Style.isTableGen()) {
+          break;
+      }
+      else if (Style.isCSharp()) {
         if (Contexts.back().InCSharpAttributeSpecifier) {
           Tok->setType(TT_AttributeColon);
           break;
@@ -3706,6 +3710,10 @@ bool TokenAnnotator::spaceRequiredBeforeParens(const FormatToken &Right) const {
 bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
                                           const FormatToken &Left,
                                           const FormatToken &Right) const {
+  if (Style.isTableGen() && Left.is(tok::hash) &&
+      Right.isOneOf(tok::identifier, tok::string_literal)) {
+    return true;
+  }
   if (Left.is(tok::kw_return) &&
       !Right.isOneOf(tok::semi, tok::r_paren, tok::hashhash)) {
     return true;
