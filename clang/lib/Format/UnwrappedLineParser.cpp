@@ -3892,6 +3892,10 @@ void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
           break;
       }
       if (FormatTok->is(tok::l_square)) {
+        if (Style.isTableGen()) {
+            parseSquare();
+            continue;
+        }
         FormatToken *Previous = FormatTok->Previous;
         if (!Previous ||
             !(Previous->is(tok::r_paren) || Previous->isTypeOrIdentifier())) {

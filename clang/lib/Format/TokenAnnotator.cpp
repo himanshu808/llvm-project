@@ -4045,7 +4045,7 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
       return true;
     if (Left.isOneOf(tok::pp_elif, tok::kw_for, tok::kw_while, tok::kw_switch,
                      tok::kw_case, TT_ForEachMacro, TT_ObjCForIn) ||
-        Left.isIf(Line.Type != LT_PreprocessorDirective) ||
+        Left.isIf(Line.Type != LT_PreprocessorDirective && !Style.isTableGen()) ||
         Right.is(TT_ConditionLParen)) {
       return Style.SpaceBeforeParensOptions.AfterControlStatements ||
              spaceRequiredBeforeParens(Right);
