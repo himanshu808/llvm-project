@@ -16,6 +16,7 @@
 
 #include "Utils.h"
 #include "lldb/Core/Address.h"
+#include "lldb/Core/Debugger.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Core/ValueObjectRegister.h"
 #include "lldb/Core/ValueObjectVariable.h"
@@ -601,7 +602,8 @@ SBValue SBFrame::FindValue(const char *name, ValueType value_type,
                 stop_if_block_is_inlined_function,
                 [frame](Variable *v) { return v->IsInScope(frame); },
                 &variable_list);
-          if (value_type == eValueTypeVariableGlobal) {
+          if (value_type == eValueTypeVariableGlobal 
+              || value_type == eValueTypeVariableStatic) {
             const bool get_file_globals = true;
             VariableList *frame_vars = frame->GetVariableList(get_file_globals,
                                                               nullptr);
@@ -707,24 +709,20 @@ SBThread SBFrame::GetThread() const {
 const char *SBFrame::Disassemble() const {
   LLDB_INSTRUMENT_VA(this);
 
-  const char *disassembly = nullptr;
   std::unique_lock<std::recursive_mutex> lock;
   ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
-
-  StackFrame *frame = nullptr;
   Target *target = exe_ctx.GetTargetPtr();
   Process *process = exe_ctx.GetProcessPtr();
-  if (target && process) {
-    Process::StopLocker stop_locker;
-    if (stop_locker.TryLock(&process->GetRunLock())) {
-      frame = exe_ctx.GetFramePtr();
-      if (frame) {
-        disassembly = frame->Disassemble();
-      }
-    }
+  if (!target || !process)
+    return nullptr;
+
+  Process::StopLocker stop_locker;
+  if (stop_locker.TryLock(&process->GetRunLock())) {
+    if (auto *frame = exe_ctx.GetFramePtr())
+      return ConstString(frame->Disassemble()).GetCString();
   }
 
-  return disassembly;
+  return nullptr;
 }
 
 SBValueList SBFrame::GetVariables(bool arguments, bool locals, bool statics,
@@ -806,6 +804,7 @@ SBValueList SBFrame::GetVariables(const lldb::SBVariablesOptions &options) {
     if (stop_locker.TryLock(&process->GetRunLock())) {
       frame = exe_ctx.GetFramePtr();
       if (frame) {
+        Debugger &dbg = process->GetTarget().GetDebugger();
         VariableList *variable_list = nullptr;
         Status var_error;
         variable_list = frame->GetVariableList(true, &var_error);
@@ -815,6 +814,11 @@ SBValueList SBFrame::GetVariables(const lldb::SBVariablesOptions &options) {
           const size_t num_variables = variable_list->GetSize();
           if (num_variables) {
             for (const VariableSP &variable_sp : *variable_list) {
+              if (dbg.InterruptRequested()) {
+                Log *log = GetLog(LLDBLog::Host);
+                LLDB_LOG(log, "Interrupted SBFrame::GetVariables");
+                return {};
+              }
               if (variable_sp) {
                 bool add_variable = false;
                 switch (variable_sp->GetScope()) {

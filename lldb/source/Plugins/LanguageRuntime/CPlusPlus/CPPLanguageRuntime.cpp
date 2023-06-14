@@ -28,7 +28,6 @@
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/ThreadPlanRunToAddress.h"
 #include "lldb/Target/ThreadPlanStepInRange.h"
-#include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Timer.h"
 
 using namespace lldb;
@@ -40,17 +39,6 @@ char CPPLanguageRuntime::ID = 0;
 
 CPPLanguageRuntime::CPPLanguageRuntime(Process *process)
     : LanguageRuntime(process) {}
-
-bool CPPLanguageRuntime::ShouldHideVariable(llvm::StringRef name) const {
-  // Matches the global function objects in std::ranges/std::ranges::views
-  // E.g.,
-  //   std::__1::ranges::views::__cpo::take
-  //   std::__1::ranges::__cpo::max_element
-  static RegularExpression ignore_global_ranges_pattern(
-      "std::__[[:alnum:]]+::ranges(::views)*::__cpo");
-
-  return ignore_global_ranges_pattern.Execute(name);
-}
 
 bool CPPLanguageRuntime::IsAllowedRuntimeValue(ConstString name) {
   return name == g_this;
@@ -150,12 +138,11 @@ CPPLanguageRuntime::FindLibCppStdFunctionCallableInfo(
   //    we will obtain the name from this pointer.
   // 5) a free function. A pointer to the function will stored after the vtable
   //    we will obtain the name from this pointer.
-  ValueObjectSP member_f_(
-      valobj_sp->GetChildMemberWithName(ConstString("__f_"), true));
+  ValueObjectSP member_f_(valobj_sp->GetChildMemberWithName("__f_", true));
 
   if (member_f_) {
     ValueObjectSP sub_member_f_(
-       member_f_->GetChildMemberWithName(ConstString("__f_"), true));
+        member_f_->GetChildMemberWithName("__f_", true));
 
     if (sub_member_f_)
         member_f_ = sub_member_f_;

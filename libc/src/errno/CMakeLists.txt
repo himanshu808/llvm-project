@@ -4,7 +4,7 @@ add_entrypoint_object(
     libc_errno.cpp
   HDRS
     libc_errno.h     # Include this
-    llvmlibc_errno.h # DEPRECATED: Will be removed soon
   DEPENDS
     libc.include.errno
+    libc.src.__support.common
 )

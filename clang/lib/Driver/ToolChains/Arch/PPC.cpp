@@ -85,7 +85,8 @@ std::string ppc::getPPCTuneCPU(const ArgList &Args, const llvm::Triple &T) {
 }
 
 /// Get the (LLVM) name of the PowerPC cpu we are targeting.
-std::string ppc::getPPCTargetCPU(const ArgList &Args, const llvm::Triple &T) {
+std::string ppc::getPPCTargetCPU(const Driver &D, const ArgList &Args,
+                                 const llvm::Triple &T) {
   if (Arg *A = Args.getLastArg(clang::driver::options::OPT_mcpu_EQ))
     return normalizeCPUName(A->getValue(), T);
   return getPPCGenericTargetCPU(T);
@@ -111,7 +112,8 @@ void ppc::getPPCTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   if (Triple.getSubArch() == llvm::Triple::PPCSubArch_spe)
     Features.push_back("+spe");
 
-  handleTargetFeaturesGroup(Args, Features, options::OPT_m_ppc_Features_Group);
+  handleTargetFeaturesGroup(D, Triple, Args, Features,
+                            options::OPT_m_ppc_Features_Group);
 
   ppc::FloatABI FloatABI = ppc::getPPCFloatABI(D, Args);
   if (FloatABI == ppc::FloatABI::Soft)

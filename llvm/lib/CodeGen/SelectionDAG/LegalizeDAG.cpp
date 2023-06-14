@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
+#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
@@ -41,7 +42,6 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MachineValueType.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
@@ -172,6 +172,8 @@ private:
   SDValue ExpandFCOPYSIGN(SDNode *Node) const;
   SDValue ExpandFABS(SDNode *Node) const;
   SDValue ExpandFNEG(SDNode *Node) const;
+  SDValue expandLdexp(SDNode *Node) const;
+
   SDValue ExpandLegalINT_TO_FP(SDNode *Node, SDValue &Chain);
   void PromoteLegalINT_TO_FP(SDNode *N, const SDLoc &dl,
                              SmallVectorImpl<SDValue> &Results);
@@ -998,6 +1000,10 @@ void SelectionDAGLegalize::LegalizeOp(SDNode *Node) {
                                     Node->getValueType(0));
     if (Action != TargetLowering::Promote)
       Action = TLI.getOperationAction(Node->getOpcode(), MVT::Other);
+    break;
+  case ISD::SET_FPENV:
+    Action = TLI.getOperationAction(Node->getOpcode(),
+                                    Node->getOperand(1).getValueType());
     break;
   case ISD::FP_TO_FP16:
   case ISD::FP_TO_BF16:
@@ -2309,6 +2315,118 @@ SelectionDAGLegalize::ExpandSinCosLibCall(SDNode *Node,
       DAG.getLoad(RetVT, dl, CallInfo.second, CosPtr, MachinePointerInfo()));
 }
 
+SDValue SelectionDAGLegalize::expandLdexp(SDNode *Node) const {
+  SDLoc dl(Node);
+  EVT VT = Node->getValueType(0);
+  SDValue X = Node->getOperand(0);
+  SDValue N = Node->getOperand(1);
+  EVT ExpVT = N.getValueType();
+  EVT AsIntVT = VT.changeTypeToInteger();
+  if (AsIntVT == EVT()) // TODO: How to handle f80?
+    return SDValue();
+
+  if (Node->getOpcode() == ISD::STRICT_FLDEXP) // TODO
+    return SDValue();
+
+  SDNodeFlags NSW;
+  NSW.setNoSignedWrap(true);
+  SDNodeFlags NUW_NSW;
+  NUW_NSW.setNoUnsignedWrap(true);
+  NUW_NSW.setNoSignedWrap(true);
+
+  EVT SetCCVT =
+      TLI.getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), ExpVT);
+  const fltSemantics &FltSem = SelectionDAG::EVTToAPFloatSemantics(VT);
+
+  const APFloat::ExponentType MaxExpVal = APFloat::semanticsMaxExponent(FltSem);
+  const APFloat::ExponentType MinExpVal = APFloat::semanticsMinExponent(FltSem);
+  const int Precision = APFloat::semanticsPrecision(FltSem);
+
+  const SDValue MaxExp = DAG.getConstant(MaxExpVal, dl, ExpVT);
+  const SDValue MinExp = DAG.getConstant(MinExpVal, dl, ExpVT);
+
+  const SDValue DoubleMaxExp = DAG.getConstant(2 * MaxExpVal, dl, ExpVT);
+
+  const APFloat One(FltSem, "1.0");
+  APFloat ScaleUpK = scalbn(One, MaxExpVal, APFloat::rmNearestTiesToEven);
+
+  // Offset by precision to avoid denormal range.
+  APFloat ScaleDownK =
+      scalbn(One, MinExpVal + Precision, APFloat::rmNearestTiesToEven);
+
+  // TODO: Should really introduce control flow and use a block for the >
+  // MaxExp, < MinExp cases
+
+  // First, handle exponents Exp > MaxExp and scale down.
+  SDValue NGtMaxExp = DAG.getSetCC(dl, SetCCVT, N, MaxExp, ISD::SETGT);
+
+  SDValue DecN0 = DAG.getNode(ISD::SUB, dl, ExpVT, N, MaxExp, NSW);
+  SDValue ClampMaxVal = DAG.getConstant(3 * MaxExpVal, dl, ExpVT);
+  SDValue ClampN_Big = DAG.getNode(ISD::SMIN, dl, ExpVT, N, ClampMaxVal);
+  SDValue DecN1 =
+      DAG.getNode(ISD::SUB, dl, ExpVT, ClampN_Big, DoubleMaxExp, NSW);
+
+  SDValue ScaleUpTwice =
+      DAG.getSetCC(dl, SetCCVT, N, DoubleMaxExp, ISD::SETUGT);
+
+  const SDValue ScaleUpVal = DAG.getConstantFP(ScaleUpK, dl, VT);
+  SDValue ScaleUp0 = DAG.getNode(ISD::FMUL, dl, VT, X, ScaleUpVal);
+  SDValue ScaleUp1 = DAG.getNode(ISD::FMUL, dl, VT, ScaleUp0, ScaleUpVal);
+
+  SDValue SelectN_Big =
+      DAG.getNode(ISD::SELECT, dl, ExpVT, ScaleUpTwice, DecN1, DecN0);
+  SDValue SelectX_Big =
+      DAG.getNode(ISD::SELECT, dl, VT, ScaleUpTwice, ScaleUp1, ScaleUp0);
+
+  // Now handle exponents Exp < MinExp
+  SDValue NLtMinExp = DAG.getSetCC(dl, SetCCVT, N, MinExp, ISD::SETLT);
+
+  SDValue Increment0 = DAG.getConstant(-(MinExpVal + Precision), dl, ExpVT);
+  SDValue Increment1 = DAG.getConstant(-2 * (MinExpVal + Precision), dl, ExpVT);
+
+  SDValue IncN0 = DAG.getNode(ISD::ADD, dl, ExpVT, N, Increment0, NUW_NSW);
+
+  SDValue ClampMinVal =
+      DAG.getConstant(3 * MinExpVal + 2 * Precision, dl, ExpVT);
+  SDValue ClampN_Small = DAG.getNode(ISD::SMAX, dl, ExpVT, N, ClampMinVal);
+  SDValue IncN1 =
+      DAG.getNode(ISD::ADD, dl, ExpVT, ClampN_Small, Increment1, NSW);
+
+  const SDValue ScaleDownVal = DAG.getConstantFP(ScaleDownK, dl, VT);
+  SDValue ScaleDown0 = DAG.getNode(ISD::FMUL, dl, VT, X, ScaleDownVal);
+  SDValue ScaleDown1 = DAG.getNode(ISD::FMUL, dl, VT, ScaleDown0, ScaleDownVal);
+
+  SDValue ScaleDownTwice = DAG.getSetCC(
+      dl, SetCCVT, N, DAG.getConstant(2 * MinExpVal + Precision, dl, ExpVT),
+      ISD::SETULT);
+
+  SDValue SelectN_Small =
+      DAG.getNode(ISD::SELECT, dl, ExpVT, ScaleDownTwice, IncN1, IncN0);
+  SDValue SelectX_Small =
+      DAG.getNode(ISD::SELECT, dl, VT, ScaleDownTwice, ScaleDown1, ScaleDown0);
+
+  // Now combine the two out of range exponent handling cases with the base
+  // case.
+  SDValue NewX = DAG.getNode(
+      ISD::SELECT, dl, VT, NGtMaxExp, SelectX_Big,
+      DAG.getNode(ISD::SELECT, dl, VT, NLtMinExp, SelectX_Small, X));
+
+  SDValue NewN = DAG.getNode(
+      ISD::SELECT, dl, ExpVT, NGtMaxExp, SelectN_Big,
+      DAG.getNode(ISD::SELECT, dl, ExpVT, NLtMinExp, SelectN_Small, N));
+
+  SDValue BiasedN = DAG.getNode(ISD::ADD, dl, ExpVT, NewN, MaxExp, NSW);
+
+  SDValue ExponentShiftAmt =
+      DAG.getShiftAmountConstant(Precision - 1, ExpVT, dl);
+  SDValue CastExpToValTy = DAG.getZExtOrTrunc(BiasedN, dl, AsIntVT);
+
+  SDValue AsInt = DAG.getNode(ISD::SHL, dl, AsIntVT, CastExpToValTy,
+                              ExponentShiftAmt, NUW_NSW);
+  SDValue AsFP = DAG.getNode(ISD::BITCAST, dl, VT, AsInt);
+  return DAG.getNode(ISD::FMUL, dl, VT, NewX, AsFP);
+}
+
 /// This function is responsible for legalizing a
 /// INT_TO_FP operation of the specified operand when the target requests that
 /// we expand it.  At this point, we know that the result and operand types are
@@ -2694,6 +2812,11 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
   switch (Node->getOpcode()) {
   case ISD::ABS:
     if ((Tmp1 = TLI.expandABS(Node, DAG)))
+      Results.push_back(Tmp1);
+    break;
+  case ISD::ABDS:
+  case ISD::ABDU:
+    if ((Tmp1 = TLI.expandABD(Node, DAG)))
       Results.push_back(Tmp1);
     break;
   case ISD::CTPOP:
@@ -3241,6 +3364,23 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     }
     break;
   }
+  case ISD::FLDEXP:
+  case ISD::STRICT_FLDEXP: {
+    EVT VT = Node->getValueType(0);
+    RTLIB::Libcall LC = RTLIB::getLDEXP(VT);
+    // Use the LibCall instead, it is very likely faster
+    // FIXME: Use separate LibCall action.
+    if (TLI.getLibcallName(LC))
+      break;
+
+    if (SDValue Expanded = expandLdexp(Node)) {
+      Results.push_back(Expanded);
+      if (Node->getOpcode() == ISD::STRICT_FLDEXP)
+        Results.push_back(Expanded.getValue(1));
+    }
+
+    break;
+  }
   case ISD::FMAD:
     llvm_unreachable("Illegal fmad should never be formed");
 
@@ -3477,13 +3617,13 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     // if we were allowed to generate libcalls to division functions of illegal
     // type. But we cannot do that.
     llvm_unreachable("Cannot expand DIVFIX!");
-  case ISD::ADDCARRY:
-  case ISD::SUBCARRY: {
+  case ISD::UADDO_CARRY:
+  case ISD::USUBO_CARRY: {
     SDValue LHS = Node->getOperand(0);
     SDValue RHS = Node->getOperand(1);
     SDValue Carry = Node->getOperand(2);
 
-    bool IsAdd = Node->getOpcode() == ISD::ADDCARRY;
+    bool IsAdd = Node->getOpcode() == ISD::UADDO_CARRY;
 
     // Initial add of the 2 operands.
     unsigned Op = IsAdd ? ISD::ADD : ISD::SUB;
@@ -3628,9 +3768,7 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     } else {
       // We test only the i1 bit.  Skip the AND if UNDEF or another AND.
       if (Tmp2.isUndef() ||
-          (Tmp2.getOpcode() == ISD::AND &&
-           isa<ConstantSDNode>(Tmp2.getOperand(1)) &&
-           cast<ConstantSDNode>(Tmp2.getOperand(1))->getZExtValue() == 1))
+          (Tmp2.getOpcode() == ISD::AND && isOneConstant(Tmp2.getOperand(1))))
         Tmp3 = Tmp2;
       else
         Tmp3 = DAG.getNode(ISD::AND, dl, Tmp2.getValueType(), Tmp2,
@@ -4135,6 +4273,11 @@ void SelectionDAGLegalize::ConvertNodeToLibcall(SDNode *Node) {
                     RTLIB::ROUNDEVEN_F128,
                     RTLIB::ROUNDEVEN_PPCF128, Results);
     break;
+  case ISD::FLDEXP:
+  case ISD::STRICT_FLDEXP:
+    ExpandFPLibCall(Node, RTLIB::LDEXP_F32, RTLIB::LDEXP_F64, RTLIB::LDEXP_F80,
+                    RTLIB::LDEXP_F128, RTLIB::LDEXP_PPCF128, Results);
+    break;
   case ISD::FPOWI:
   case ISD::STRICT_FPOWI: {
     RTLIB::Libcall LC = RTLIB::getPOWI(Node->getSimpleValueType(0));
@@ -4457,6 +4600,29 @@ void SelectionDAGLegalize::ConvertNodeToLibcall(SDNode *Node) {
       break;
     }
     break;
+  case ISD::RESET_FPENV: {
+    // It is legalized to call 'fesetenv(FE_DFL_ENV)'. On most targets
+    // FE_DFL_ENV is defined as '((const fenv_t *) -1)' in glibc.
+    SDValue Ptr = DAG.getIntPtrConstant(-1LL, dl);
+    SDValue Chain = Node->getOperand(0);
+    Results.push_back(
+        DAG.makeStateFunctionCall(RTLIB::FESETENV, Ptr, Chain, dl));
+    break;
+  }
+  case ISD::GET_FPENV_MEM: {
+    SDValue Chain = Node->getOperand(0);
+    SDValue EnvPtr = Node->getOperand(1);
+    Results.push_back(
+        DAG.makeStateFunctionCall(RTLIB::FEGETENV, EnvPtr, Chain, dl));
+    break;
+  }
+  case ISD::SET_FPENV_MEM: {
+    SDValue Chain = Node->getOperand(0);
+    SDValue EnvPtr = Node->getOperand(1);
+    Results.push_back(
+        DAG.makeStateFunctionCall(RTLIB::FESETENV, EnvPtr, Chain, dl));
+    break;
+  }
   }
 
   // Replace the original node with the legalized result.
@@ -4841,6 +5007,7 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
     Results.push_back(Tmp4.getValue(1));
     break;
   case ISD::FCOPYSIGN:
+  case ISD::FLDEXP:
   case ISD::FPOWI: {
     Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
     Tmp2 = Node->getOperand(1);

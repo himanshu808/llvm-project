@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "Globals.h"
 #include "PybindUtils.h"
 
 #include "mlir-c/AffineExpr.h"
@@ -20,6 +21,7 @@
 #include "mlir-c/Diagnostics.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/IntegerSet.h"
+#include "mlir/Bindings/Python/PybindAdaptors.h"
 #include "llvm/ADT/DenseMap.h"
 
 namespace mlir {
@@ -221,6 +223,11 @@ public:
   /// registration object (internally a PyDiagnosticHandler).
   pybind11::object attachDiagnosticHandler(pybind11::object callback);
 
+  /// Controls whether error diagnostics should be propagated to diagnostic
+  /// handlers, instead of being captured by `ErrorCapture`.
+  void setEmitErrorDiagnostics(bool value) { emitErrorDiagnostics = value; }
+  struct ErrorCapture;
+
 private:
   PyMlirContext(MlirContext context);
   // Interns the mapping of live MlirContext::ptr to PyMlirContext instances,
@@ -247,6 +254,8 @@ private:
   using LiveOperationMap =
       llvm::DenseMap<void *, std::pair<pybind11::handle, PyOperation *>>;
   LiveOperationMap liveOperations;
+
+  bool emitErrorDiagnostics = false;
 
   MlirContext context;
   friend class PyModule;
@@ -281,6 +290,34 @@ private:
   PyMlirContextRef contextRef;
 };
 
+/// Wrapper around an MlirLocation.
+class PyLocation : public BaseContextObject {
+public:
+  PyLocation(PyMlirContextRef contextRef, MlirLocation loc)
+      : BaseContextObject(std::move(contextRef)), loc(loc) {}
+
+  operator MlirLocation() const { return loc; }
+  MlirLocation get() const { return loc; }
+
+  /// Enter and exit the context manager.
+  pybind11::object contextEnter();
+  void contextExit(const pybind11::object &excType,
+                   const pybind11::object &excVal,
+                   const pybind11::object &excTb);
+
+  /// Gets a capsule wrapping the void* within the MlirLocation.
+  pybind11::object getCapsule();
+
+  /// Creates a PyLocation from the MlirLocation wrapped by a capsule.
+  /// Note that PyLocation instances are uniqued, so the returned object
+  /// may be a pre-existing object. Ownership of the underlying MlirLocation
+  /// is taken by calling this function.
+  static PyLocation createFromCapsule(pybind11::object capsule);
+
+private:
+  MlirLocation loc;
+};
+
 /// Python class mirroring the C MlirDiagnostic struct. Note that these structs
 /// are only valid for the duration of a diagnostic callback and attempting
 /// to access them outside of that will raise an exception. This applies to
@@ -294,6 +331,16 @@ public:
   PyLocation getLocation();
   pybind11::str getMessage();
   pybind11::tuple getNotes();
+
+  /// Materialized diagnostic information. This is safe to access outside the
+  /// diagnostic callback.
+  struct DiagnosticInfo {
+    MlirDiagnosticSeverity severity;
+    PyLocation location;
+    std::string message;
+    std::vector<DiagnosticInfo> notes;
+  };
+  DiagnosticInfo getInfo();
 
 private:
   MlirDiagnostic diagnostic;
@@ -349,6 +396,30 @@ private:
   std::optional<MlirDiagnosticHandlerID> registeredID;
   bool hadError = false;
   friend class PyMlirContext;
+};
+
+/// RAII object that captures any error diagnostics emitted to the provided
+/// context.
+struct PyMlirContext::ErrorCapture {
+  ErrorCapture(PyMlirContextRef ctx)
+      : ctx(ctx), handlerID(mlirContextAttachDiagnosticHandler(
+                      ctx->get(), handler, /*userData=*/this,
+                      /*deleteUserData=*/nullptr)) {}
+  ~ErrorCapture() {
+    mlirContextDetachDiagnosticHandler(ctx->get(), handlerID);
+    assert(errors.empty() && "unhandled captured errors");
+  }
+
+  std::vector<PyDiagnostic::DiagnosticInfo> take() {
+    return std::move(errors);
+  };
+
+private:
+  PyMlirContextRef ctx;
+  MlirDiagnosticHandlerID handlerID;
+  std::vector<PyDiagnostic::DiagnosticInfo> errors;
+
+  static MlirLogicalResult handler(MlirDiagnostic diag, void *userData);
 };
 
 /// Wrapper around an MlirDialect. This is exported as `DialectDescriptor` in
@@ -414,34 +485,6 @@ public:
 
 private:
   MlirDialectRegistry registry;
-};
-
-/// Wrapper around an MlirLocation.
-class PyLocation : public BaseContextObject {
-public:
-  PyLocation(PyMlirContextRef contextRef, MlirLocation loc)
-      : BaseContextObject(std::move(contextRef)), loc(loc) {}
-
-  operator MlirLocation() const { return loc; }
-  MlirLocation get() const { return loc; }
-
-  /// Enter and exit the context manager.
-  pybind11::object contextEnter();
-  void contextExit(const pybind11::object &excType,
-                   const pybind11::object &excVal,
-                   const pybind11::object &excTb);
-
-  /// Gets a capsule wrapping the void* within the MlirLocation.
-  pybind11::object getCapsule();
-
-  /// Creates a PyLocation from the MlirLocation wrapped by a capsule.
-  /// Note that PyLocation instances are uniqued, so the returned object
-  /// may be a pre-existing object. Ownership of the underlying MlirLocation
-  /// is taken by calling this function.
-  static PyLocation createFromCapsule(pybind11::object capsule);
-
-private:
-  MlirLocation loc;
 };
 
 /// Used in function arguments when None should resolve to the current context
@@ -513,11 +556,16 @@ public:
                           bool assumeVerified);
 
   // Implement the bound 'writeBytecode' method.
-  void writeBytecode(const pybind11::object &fileObject);
+  void writeBytecode(const pybind11::object &fileObject,
+                     std::optional<int64_t> bytecodeVersion);
 
   /// Moves the operation before or after the other operation.
   void moveAfter(PyOperationBase &other);
   void moveBefore(PyOperationBase &other);
+
+  /// Verify the operation. Throws `MLIRError` if verification fails, and
+  /// returns `true` otherwise.
+  bool verify();
 
   /// Each must provide access to the raw Operation.
   virtual PyOperation &getOperation() = 0;
@@ -763,7 +811,7 @@ class PyType : public BaseContextObject {
 public:
   PyType(PyMlirContextRef contextRef, MlirType type)
       : BaseContextObject(std::move(contextRef)), type(type) {}
-  bool operator==(const PyType &other);
+  bool operator==(const PyType &other) const;
   operator MlirType() const { return type; }
   MlirType get() const { return type; }
 
@@ -780,6 +828,29 @@ private:
   MlirType type;
 };
 
+/// A TypeID provides an efficient and unique identifier for a specific C++
+/// type. This allows for a C++ type to be compared, hashed, and stored in an
+/// opaque context. This class wraps around the generic MlirTypeID.
+class PyTypeID {
+public:
+  PyTypeID(MlirTypeID typeID) : typeID(typeID) {}
+  // Note, this tests whether the underlying TypeIDs are the same,
+  // not whether the wrapper MlirTypeIDs are the same, nor whether
+  // the PyTypeID objects are the same (i.e., PyTypeID is a value type).
+  bool operator==(const PyTypeID &other) const;
+  operator MlirTypeID() const { return typeID; }
+  MlirTypeID get() { return typeID; }
+
+  /// Gets a capsule wrapping the void* within the MlirTypeID.
+  pybind11::object getCapsule();
+
+  /// Creates a PyTypeID from the MlirTypeID wrapped by a capsule.
+  static PyTypeID createFromCapsule(pybind11::object capsule);
+
+private:
+  MlirTypeID typeID;
+};
+
 /// CRTP base classes for Python types that subclass Type and should be
 /// castable from it (i.e. via something like IntegerType(t)).
 /// By default, type class hierarchies are one level deep (i.e. a
@@ -793,6 +864,8 @@ public:
   //   const char *pyClassName
   using ClassTy = pybind11::class_<DerivedTy, BaseTy>;
   using IsAFunctionTy = bool (*)(MlirType);
+  using GetTypeIDFunctionTy = MlirTypeID (*)();
+  static constexpr GetTypeIDFunctionTy getTypeIdFunction = nullptr;
 
   PyConcreteType() = default;
   PyConcreteType(PyMlirContextRef contextRef, MlirType t)
@@ -803,9 +876,10 @@ public:
   static MlirType castFrom(PyType &orig) {
     if (!DerivedTy::isaFunction(orig)) {
       auto origRepr = pybind11::repr(pybind11::cast(orig)).cast<std::string>();
-      throw SetPyError(PyExc_ValueError, llvm::Twine("Cannot cast type to ") +
-                                             DerivedTy::pyClassName +
-                                             " (from " + origRepr + ")");
+      throw py::value_error((llvm::Twine("Cannot cast type to ") +
+                             DerivedTy::pyClassName + " (from " + origRepr +
+                             ")")
+                                .str());
     }
     return orig;
   }
@@ -820,6 +894,32 @@ public:
           return DerivedTy::isaFunction(otherType);
         },
         pybind11::arg("other"));
+    cls.def_property_readonly_static(
+        "static_typeid", [](py::object & /*class*/) -> MlirTypeID {
+          if (DerivedTy::getTypeIdFunction)
+            return DerivedTy::getTypeIdFunction();
+          throw py::attribute_error(
+              (DerivedTy::pyClassName + llvm::Twine(" has no typeid.")).str());
+        });
+    cls.def_property_readonly("typeid", [](PyType &self) {
+      return py::cast(self).attr("typeid").cast<MlirTypeID>();
+    });
+    cls.def("__repr__", [](DerivedTy &self) {
+      PyPrintAccumulator printAccum;
+      printAccum.parts.append(DerivedTy::pyClassName);
+      printAccum.parts.append("(");
+      mlirTypePrint(self, printAccum.getCallback(), printAccum.getUserData());
+      printAccum.parts.append(")");
+      return printAccum.join();
+    });
+
+    if (DerivedTy::getTypeIdFunction) {
+      PyGlobals::get().registerTypeCaster(
+          DerivedTy::getTypeIdFunction(),
+          pybind11::cpp_function(
+              [](PyType pyType) -> DerivedTy { return pyType; }));
+    }
+
     DerivedTy::bindDerived(cls);
   }
 
@@ -833,7 +933,7 @@ class PyAttribute : public BaseContextObject {
 public:
   PyAttribute(PyMlirContextRef contextRef, MlirAttribute attr)
       : BaseContextObject(std::move(contextRef)), attr(attr) {}
-  bool operator==(const PyAttribute &other);
+  bool operator==(const PyAttribute &other) const;
   operator MlirAttribute() const { return attr; }
   MlirAttribute get() const { return attr; }
 
@@ -896,9 +996,10 @@ public:
   static MlirAttribute castFrom(PyAttribute &orig) {
     if (!DerivedTy::isaFunction(orig)) {
       auto origRepr = pybind11::repr(pybind11::cast(orig)).cast<std::string>();
-      throw SetPyError(PyExc_ValueError,
-                       llvm::Twine("Cannot cast attribute to ") +
-                           DerivedTy::pyClassName + " (from " + origRepr + ")");
+      throw py::value_error((llvm::Twine("Cannot cast attribute to ") +
+                             DerivedTy::pyClassName + " (from " + origRepr +
+                             ")")
+                                .str());
     }
     return orig;
   }
@@ -914,9 +1015,8 @@ public:
           return DerivedTy::isaFunction(otherAttr);
         },
         pybind11::arg("other"));
-    cls.def_property_readonly("type", [](PyAttribute &attr) {
-      return PyType(attr.getContext(), mlirAttributeGetType(attr));
-    });
+    cls.def_property_readonly(
+        "type", [](PyAttribute &attr) { return mlirAttributeGetType(attr); });
     DerivedTy::bindDerived(cls);
   }
 
@@ -958,7 +1058,7 @@ class PyAffineExpr : public BaseContextObject {
 public:
   PyAffineExpr(PyMlirContextRef contextRef, MlirAffineExpr affineExpr)
       : BaseContextObject(std::move(contextRef)), affineExpr(affineExpr) {}
-  bool operator==(const PyAffineExpr &other);
+  bool operator==(const PyAffineExpr &other) const;
   operator MlirAffineExpr() const { return affineExpr; }
   MlirAffineExpr get() const { return affineExpr; }
 
@@ -985,7 +1085,7 @@ class PyAffineMap : public BaseContextObject {
 public:
   PyAffineMap(PyMlirContextRef contextRef, MlirAffineMap affineMap)
       : BaseContextObject(std::move(contextRef)), affineMap(affineMap) {}
-  bool operator==(const PyAffineMap &other);
+  bool operator==(const PyAffineMap &other) const;
   operator MlirAffineMap() const { return affineMap; }
   MlirAffineMap get() const { return affineMap; }
 
@@ -1006,7 +1106,7 @@ class PyIntegerSet : public BaseContextObject {
 public:
   PyIntegerSet(PyMlirContextRef contextRef, MlirIntegerSet integerSet)
       : BaseContextObject(std::move(contextRef)), integerSet(integerSet) {}
-  bool operator==(const PyIntegerSet &other);
+  bool operator==(const PyIntegerSet &other) const;
   operator MlirIntegerSet() const { return integerSet; }
   MlirIntegerSet get() const { return integerSet; }
 
@@ -1071,6 +1171,16 @@ public:
 private:
   PyOperationRef operation;
   MlirSymbolTable symbolTable;
+};
+
+/// Custom exception that allows access to error diagnostic information. This is
+/// converted to the `ir.MLIRError` python exception when thrown.
+struct MLIRError {
+  MLIRError(llvm::Twine message,
+            std::vector<PyDiagnostic::DiagnosticInfo> &&errorDiagnostics = {})
+      : message(message.str()), errorDiagnostics(std::move(errorDiagnostics)) {}
+  std::string message;
+  std::vector<PyDiagnostic::DiagnosticInfo> errorDiagnostics;
 };
 
 void populateIRAffine(pybind11::module &m);

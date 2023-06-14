@@ -11,9 +11,9 @@
 #include "lldb/API/SBFileSpec.h"
 #include "lldb/API/SBListener.h"
 #include "lldb/API/SBStructuredData.h"
-#include "lldb/Interpreter/ScriptedMetadata.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Utility/Instrumentation.h"
+#include "lldb/Utility/ScriptedMetadata.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -94,7 +94,7 @@ void SBAttachInfo::SetResumeCount(uint32_t c) {
 const char *SBAttachInfo::GetProcessPluginName() {
   LLDB_INSTRUMENT_VA(this);
 
-  return m_opaque_sp->GetProcessPluginName();
+  return ConstString(m_opaque_sp->GetProcessPluginName()).GetCString();
 }
 
 void SBAttachInfo::SetProcessPluginName(const char *plugin_name) {
@@ -252,6 +252,27 @@ void SBAttachInfo::SetListener(SBListener &listener) {
   LLDB_INSTRUMENT_VA(this, listener);
 
   m_opaque_sp->SetListener(listener.GetSP());
+}
+
+SBListener SBAttachInfo::GetShadowListener() {
+  LLDB_INSTRUMENT_VA(this);
+
+  lldb::ListenerSP shadow_sp = m_opaque_sp->GetShadowListener();
+  if (!shadow_sp)
+    return SBListener();
+  return SBListener(shadow_sp);
+}
+
+void SBAttachInfo::SetShadowListener(SBListener &listener) {
+  LLDB_INSTRUMENT_VA(this, listener);
+
+  ListenerSP listener_sp = listener.GetSP();
+  if (listener_sp && listener.IsValid())
+    listener_sp->SetShadow(true);
+  else
+    listener_sp = nullptr;
+
+  m_opaque_sp->SetShadowListener(listener_sp);
 }
 
 const char *SBAttachInfo::GetScriptedProcessClassName() const {

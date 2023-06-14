@@ -31,8 +31,8 @@ using namespace lldb_private;
 
 ProcessLaunchInfo::ProcessLaunchInfo()
     : ProcessInfo(), m_working_dir(), m_plugin_name(), m_flags(0),
-      m_file_actions(), m_pty(new PseudoTerminal), m_monitor_callback(nullptr),
-      m_listener_sp(), m_hijack_listener_sp() {}
+      m_file_actions(), m_pty(new PseudoTerminal), m_monitor_callback(nullptr) {
+}
 
 ProcessLaunchInfo::ProcessLaunchInfo(const FileSpec &stdin_file_spec,
                                      const FileSpec &stdout_file_spec,
@@ -321,6 +321,8 @@ bool ProcessLaunchInfo::ConvertArgumentsForLaunchingInShell(
       } else {
         for (size_t i = 0; argv[i] != nullptr; ++i) {
           std::string safe_arg = Args::GetShellSafeArgument(m_shell, argv[i]);
+          if (safe_arg.empty())
+            safe_arg = "\"\"";
           // Add a space to separate this arg from the previous one.
           shell_command.PutCString(" ");
           shell_command.PutCString(safe_arg);

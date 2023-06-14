@@ -77,24 +77,19 @@ std::string getStringImm(const MachineInstr &MI, unsigned StartIndex) {
 
 void addNumImm(const APInt &Imm, MachineInstrBuilder &MIB) {
   const auto Bitwidth = Imm.getBitWidth();
-  switch (Bitwidth) {
-  case 1:
-    break; // Already handled.
-  case 8:
-  case 16:
-  case 32:
+  if (Bitwidth == 1)
+    return; // Already handled
+  else if (Bitwidth <= 32) {
     MIB.addImm(Imm.getZExtValue());
-    break;
-  case 64: {
+    return;
+  } else if (Bitwidth <= 64) {
     uint64_t FullImm = Imm.getZExtValue();
     uint32_t LowBits = FullImm & 0xffffffff;
     uint32_t HighBits = (FullImm >> 32) & 0xffffffff;
     MIB.addImm(LowBits).addImm(HighBits);
-    break;
+    return;
   }
-  default:
-    report_fatal_error("Unsupported constant bitwidth");
-  }
+  report_fatal_error("Unsupported constant bitwidth");
 }
 
 void buildOpName(Register Target, const StringRef &Name,
@@ -298,16 +293,11 @@ std::string getOclOrSpirvBuiltinDemangledName(StringRef Name) {
     return std::string();
 
   // Try to use the itanium demangler.
-  size_t n;
-  int Status;
-  char *DemangledName = itaniumDemangle(Name.data(), nullptr, &n, &Status);
-
-  if (Status == demangle_success) {
+  if (char *DemangledName = itaniumDemangle(Name.data())) {
     std::string Result = DemangledName;
     free(DemangledName);
     return Result;
   }
-  free(DemangledName);
   // Otherwise use simple demangling to return the function name.
   if (IsNonMangledOCL || IsNonMangledSPIRV)
     return Name.str();

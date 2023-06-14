@@ -18,10 +18,6 @@ def AMDGPUDTIntTernaryOp : SDTypeProfile<1, 3, [
   SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>, SDTCisInt<0>, SDTCisInt<3>
 ]>;
 
-def AMDGPULdExpOp : SDTypeProfile<1, 2,
-  [SDTCisSameAs<0, 1>, SDTCisFP<0>, SDTCisInt<2>]
->;
-
 def AMDGPUFPClassOp : SDTypeProfile<1, 2,
   [SDTCisInt<0>, SDTCisFP<1>, SDTCisInt<2>]
 >;
@@ -85,9 +81,16 @@ def AMDGPUcall : SDNode<"AMDGPUISD::CALL",
   SDNPVariadic]
 >;
 
-def AMDGPUtc_return: SDNode<"AMDGPUISD::TC_RETURN",
-  SDTypeProfile<0, 3, [SDTCisPtrTy<0>]>,
-  [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]
+def AMDGPUTCReturnTP : SDTypeProfile<0, 3, [
+  SDTCisPtrTy<0>
+]>;
+
+def AMDGPUtc_return: SDNode<"AMDGPUISD::TC_RETURN", AMDGPUTCReturnTP,
+[SDNPHasChain, SDNPOptInGlue, SDNPVariadic]
+>;
+
+def AMDGPUtc_return_gfx: SDNode<"AMDGPUISD::TC_RETURN_GFX", AMDGPUTCReturnTP,
+[SDNPHasChain, SDNPOptInGlue, SDNPVariadic]
 >;
 
 def AMDGPUtrap : SDNode<"AMDGPUISD::TRAP",
@@ -120,8 +123,6 @@ def AMDGPUrcp_iflag : SDNode<"AMDGPUISD::RCP_IFLAG", SDTFPUnaryOp>;
 
 // out = 1.0 / sqrt(a) result clamped to +/- max_float.
 def AMDGPUrsq_clamp_impl : SDNode<"AMDGPUISD::RSQ_CLAMP", SDTFPUnaryOp>;
-
-def AMDGPUldexp_impl : SDNode<"AMDGPUISD::LDEXP", AMDGPULdExpOp>;
 
 def AMDGPUpkrtz_f16_f32_impl : SDNode<"AMDGPUISD::CVT_PKRTZ_F16_F32", AMDGPUFPPackOp>;
 def AMDGPUpknorm_i16_f32_impl : SDNode<"AMDGPUISD::CVT_PKNORM_I16_F32", AMDGPUFPPackOp>;
@@ -355,7 +356,7 @@ def AMDGPUendpgm : SDNode<"AMDGPUISD::ENDPGM", SDTNone,
 def AMDGPUreturn_to_epilog : SDNode<"AMDGPUISD::RETURN_TO_EPILOG", SDTNone,
     [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
-def AMDGPUret_flag : SDNode<"AMDGPUISD::RET_FLAG", SDTNone,
+def AMDGPUret_glue : SDNode<"AMDGPUISD::RET_GLUE", SDTNone,
   [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]
 >;
 
@@ -381,10 +382,6 @@ def AMDGPUcos : PatFrags<(ops node:$src), [(int_amdgcn_cos node:$src),
                                            (AMDGPUcos_impl node:$src)]>;
 def AMDGPUfract : PatFrags<(ops node:$src), [(int_amdgcn_fract node:$src),
                                              (AMDGPUfract_impl node:$src)]>;
-
-def AMDGPUldexp : PatFrags<(ops node:$src0, node:$src1),
-  [(int_amdgcn_ldexp node:$src0, node:$src1),
-   (AMDGPUldexp_impl node:$src0, node:$src1)]>;
 
 def AMDGPUfp_class : PatFrags<(ops node:$src0, node:$src1),
   [(int_amdgcn_class node:$src0, node:$src1),

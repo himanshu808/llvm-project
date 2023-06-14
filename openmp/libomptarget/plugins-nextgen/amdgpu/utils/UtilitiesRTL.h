@@ -146,6 +146,10 @@ struct KernelMetaDataTy {
   uint32_t KernelSegmentSize;
   uint32_t ExplicitArgumentCount;
   uint32_t ImplicitArgumentCount;
+  uint32_t RequestedWorkgroupSize[3];
+  uint32_t WorkgroupSizeHint[3];
+  uint32_t WavefronSize;
+  uint32_t MaxFlatWorkgroupSize;
 };
 namespace {
 
@@ -156,13 +160,13 @@ public:
 
   /// Process ELF note to read AMDGPU metadata from respective information
   /// fields.
-  Error processNote(const object::ELF64LE::Note &Note) {
+  Error processNote(const object::ELF64LE::Note &Note, size_t Align) {
     if (Note.getName() != "AMDGPU")
       return Error::success(); // We are not interested in other things
 
     assert(Note.getType() == ELF::NT_AMDGPU_METADATA &&
            "Parse AMDGPU MetaData");
-    auto Desc = Note.getDesc();
+    auto Desc = Note.getDesc(Align);
     StringRef MsgPackString =
         StringRef(reinterpret_cast<const char *>(Desc.data()), Desc.size());
     msgpack::Document MsgPackDoc;
@@ -194,6 +198,19 @@ private:
       return DK.getString() == SK;
     };
 
+    const auto getSequenceOfThreeInts = [](msgpack::DocNode &DN,
+                                           uint32_t *Vals) {
+      assert(DN.isArray() && "MsgPack DocNode is an array node");
+      auto DNA = DN.getArray();
+      assert(DNA.size() == 3 && "ArrayNode has at most three elements");
+
+      int i = 0;
+      for (auto DNABegin = DNA.begin(), DNAEnd = DNA.end(); DNABegin != DNAEnd;
+           ++DNABegin) {
+        Vals[i++] = DNABegin->getUInt();
+      }
+    };
+
     if (isKey(V.first, ".name")) {
       KernelName = V.second.toString();
     } else if (isKey(V.first, ".sgpr_count")) {
@@ -208,6 +225,14 @@ private:
       KernelData.PrivateSegmentSize = V.second.getUInt();
     } else if (isKey(V.first, ".group_segement_fixed_size")) {
       KernelData.GroupSegmentList = V.second.getUInt();
+    } else if (isKey(V.first, ".reqd_workgroup_size")) {
+      getSequenceOfThreeInts(V.second, KernelData.RequestedWorkgroupSize);
+    } else if (isKey(V.first, ".workgroup_size_hint")) {
+      getSequenceOfThreeInts(V.second, KernelData.WorkgroupSizeHint);
+    } else if (isKey(V.first, ".wavefront_size")) {
+      KernelData.WavefronSize = V.second.getUInt();
+    } else if (isKey(V.first, ".max_flat_workgroup_size")) {
+      KernelData.MaxFlatWorkgroupSize = V.second.getUInt();
     }
 
     return Error::success();
@@ -288,13 +313,14 @@ Error readAMDGPUMetaDataFromImage(MemoryBufferRef MemBuffer,
       if (Err)
         return Err;
       // Fills the KernelInfoTabel entries in the reader
-      if ((Err = Reader.processNote(N)))
+      if ((Err = Reader.processNote(N, S.sh_addralign)))
         return Err;
     }
   }
 
   return Error::success();
 }
+
 } // namespace utils
 } // namespace plugin
 } // namespace target

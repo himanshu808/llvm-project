@@ -243,7 +243,7 @@ float floorf(float __x) { return __ocml_floor_f32(__x); }
 
 __DEVICE__
 float fmaf(float __x, float __y, float __z) {
-  return __ocml_fma_f32(__x, __y, __z);
+  return __builtin_fmaf(__x, __y, __z);
 }
 
 __DEVICE__
@@ -257,15 +257,8 @@ float fmodf(float __x, float __y) { return __ocml_fmod_f32(__x, __y); }
 
 __DEVICE__
 float frexpf(float __x, int *__nptr) {
-  int __tmp;
-#ifdef __OPENMP_AMDGCN__
-#pragma omp allocate(__tmp) allocator(omp_thread_mem_alloc)
-#endif
-  float __r =
-      __ocml_frexp_f32(__x, (__attribute__((address_space(5))) int *)&__tmp);
-  *__nptr = __tmp;
-
-  return __r;
+  *__nptr = __builtin_amdgcn_frexp_expf(__x);
+  return __builtin_amdgcn_frexp_mantf(__x);
 }
 
 __DEVICE__
@@ -621,7 +614,7 @@ float __fmaf_rz(float __x, float __y, float __z) {
 #else
 __DEVICE__
 float __fmaf_rn(float __x, float __y, float __z) {
-  return __ocml_fma_f32(__x, __y, __z);
+  return __builtin_fmaf(__x, __y, __z);
 }
 #endif
 
@@ -799,7 +792,7 @@ double floor(double __x) { return __ocml_floor_f64(__x); }
 
 __DEVICE__
 double fma(double __x, double __y, double __z) {
-  return __ocml_fma_f64(__x, __y, __z);
+  return __builtin_fma(__x, __y, __z);
 }
 
 __DEVICE__
@@ -813,14 +806,8 @@ double fmod(double __x, double __y) { return __ocml_fmod_f64(__x, __y); }
 
 __DEVICE__
 double frexp(double __x, int *__nptr) {
-  int __tmp;
-#ifdef __OPENMP_AMDGCN__
-#pragma omp allocate(__tmp) allocator(omp_thread_mem_alloc)
-#endif
-  double __r =
-      __ocml_frexp_f64(__x, (__attribute__((address_space(5))) int *)&__tmp);
-  *__nptr = __tmp;
-  return __r;
+  *__nptr = __builtin_amdgcn_frexp_exp(__x);
+  return __builtin_amdgcn_frexp_mant(__x);
 }
 
 __DEVICE__
@@ -1258,7 +1245,7 @@ double __fma_rz(double __x, double __y, double __z) {
 #else
 __DEVICE__
 double __fma_rn(double __x, double __y, double __z) {
-  return __ocml_fma_f64(__x, __y, __z);
+  return __builtin_fma(__x, __y, __z);
 }
 #endif
 // END INTRINSICS
