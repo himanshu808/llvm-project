@@ -1863,6 +1863,14 @@ void UnwrappedLineParser::parseStructuralElement(
         return;
       }
 
+      if (Style.isTableGen() && FormatTok->is(TT_Unknown)) {
+        // current token must be a macro such as #define
+        if (Previous && FormatTok->TokenText.startswith("#")){
+          addUnwrappedLine();
+          return;
+        }
+      }
+
       // Function declarations (as opposed to function expressions) are parsed
       // on their own unwrapped line by continuing this loop. Function
       // expressions (functions that are not on their own line) must not create
