@@ -55,7 +55,9 @@ void DefinitionBlockSeparator::separateBlocks(
         if ((CurrentToken->isOneOf(tok::kw_class, tok::kw_struct,
                                    tok::kw_union) ||
              (Style.isJavaScript() &&
-              CurrentToken->is(ExtraKeywords.kw_function)))) {
+              CurrentToken->is(ExtraKeywords.kw_function)) ||
+             (Style.isTableGen() &&
+              CurrentToken->isOneOf(ExtraKeywords.kw_def, ExtraKeywords.kw_multiclass)))) {
           return true;
         }
         if (!ExcludeEnum && CurrentToken->is(tok::kw_enum))

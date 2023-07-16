@@ -1753,6 +1753,8 @@ void UnwrappedLineParser::parseStructuralElement(
       [[fallthrough]];
     case tok::kw_struct:
     case tok::kw_union:
+      if (Style.isTableGen())
+        addUnwrappedLine();
       if (parseStructLike())
         return;
       break;
@@ -1902,6 +1904,13 @@ void UnwrappedLineParser::parseStructuralElement(
       }
 
       if (!Style.isCpp() && FormatTok->is(Keywords.kw_interface)) {
+        if (parseStructLike())
+          return;
+        break;
+      }
+
+      if (Style.isTableGen() && FormatTok->isOneOf(Keywords.kw_def, Keywords.kw_multiclass)) {
+        addUnwrappedLine();
         if (parseStructLike())
           return;
         break;
