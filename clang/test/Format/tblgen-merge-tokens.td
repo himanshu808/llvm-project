@@ -3,3 +3,6 @@
 
 // CHECK: {{def a : b<\([[:space:]]    c src:\$dst,[[:space:]]    f:\$g\)>;}}
 def a : b<(c src:$dst, f:$g)>;
+
+// CHECK: {{int newVariable =[[:space:]]    \!add\(x, y\);}}
+int newVariable = !add(x, y);

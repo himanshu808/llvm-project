@@ -275,6 +275,17 @@ void FormatTokenLexer::tryMergePreviousTokens() {
         return;
       }
     }
+    else if (Tokens.size() > 1 && Tokens.rbegin()[1]->is(tok::exclaim)
+            && FormatTok->isOneOf(tok::identifier, tok::kw_if)) {
+      if (tryMergeTokens({tok::exclaim, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+      else if (tryMergeTokens({tok::exclaim, tok::kw_if}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
   }
 }
 
