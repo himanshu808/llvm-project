@@ -275,6 +275,36 @@ void FormatTokenLexer::tryMergePreviousTokens() {
         return;
       }
     }
+    else if (FormatTok->TokenText.equals("define")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("ifdef")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("ifndef")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("endif")) {
+      if (tryMergeTokens({tok::hash, tok::identifier}, TT_MacroBlockEnd)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+    else if (FormatTok->TokenText.equals("else")) {
+      if (tryMergeTokens({tok::hash, tok::kw_else}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
     else if (Tokens.size() > 1 && Tokens.rbegin()[1]->is(tok::exclaim)
             && FormatTok->isOneOf(tok::identifier, tok::kw_if)) {
       if (tryMergeTokens({tok::exclaim, tok::identifier}, TT_Unknown)) {
