@@ -267,6 +267,15 @@ void FormatTokenLexer::tryMergePreviousTokens() {
       return;
     }
   }
+
+  if (Style.isTableGen()) {
+    if (FormatTok->TokenText.startswith("$")) {
+      if (tryMergeTokens({tok::identifier, tok::colon, tok::identifier}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::identifier);
+        return;
+      }
+    }
+  }
 }
 
 bool FormatTokenLexer::tryMergeNSStringLiteral() {
@@ -523,7 +532,7 @@ bool FormatTokenLexer::tryMergeTokens(size_t Count, TokenType NewType) {
   for (size_t i = 1; i < Count; ++i) {
     // If there is whitespace separating the token and the previous one,
     // they should not be merged.
-    if (First[i]->hasWhitespaceBefore())
+    if (First[i]->hasWhitespaceBefore() && !Style.isTableGen())
       return false;
     AddLength += First[i]->TokenText.size();
   }
