@@ -991,7 +991,11 @@ private:
           Tok->setType(TT_JsTypeColon);
           break;
         }
-      } else if (Style.isCSharp()) {
+      }
+      else if (Style.isTableGen()) {
+          break;
+      }
+      else if (Style.isCSharp()) {
         if (Contexts.back().InCSharpAttributeSpecifier) {
           Tok->setType(TT_AttributeColon);
           break;
