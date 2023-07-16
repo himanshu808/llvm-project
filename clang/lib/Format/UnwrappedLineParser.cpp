@@ -3730,7 +3730,7 @@ bool UnwrappedLineParser::parseStructLike() {
   parseRecord();
   // This does not apply to Java, JavaScript and C#.
   if (Style.Language == FormatStyle::LK_Java || Style.isJavaScript() ||
-      Style.isCSharp()) {
+      Style.isCSharp() || Style.isTableGen()) {
     if (FormatTok->is(tok::semi))
       nextToken();
     addUnwrappedLine();
