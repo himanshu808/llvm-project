@@ -2455,8 +2455,7 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
 /// double ampersands. This only counts for the current parens scope.
 void UnwrappedLineParser::parseParens(TokenType AmpAmpTokenType) {
   bool needClose = true;
-
-  if (!(Style.isTableGen() && FormatTok->Previous->is(tok::kw_if)) || FormatTok->is(tok::l_paren)) {
+  if (!(Style.isTableGen() && FormatTok->Previous && FormatTok->Previous->is(tok::kw_if)) || FormatTok->is(tok::l_paren)) {
     assert(FormatTok->is(tok::l_paren) && "'(' expected.");
     nextToken();
   }
@@ -3075,8 +3074,9 @@ void UnwrappedLineParser::parseForOrWhileLoop(bool HasParens) {
           "'for', 'while' or foreach macro expected");
   }
   else {
-    assert(FormatTok->isOneOf(Keywords.kw_foreach, Keywords.kw_let) &&
-         "'for', 'while' or foreach macro expected");
+    assert(FormatTok->isOneOf(Keywords.kw_foreach, Keywords.kw_let,
+                              tok::kw_for, tok::kw_while, TT_ForEachMacro) &&
+         "'foreach', 'let', 'for', 'while' or foreach macro expected");
   }
 
   const bool KeepBraces = !Style.RemoveBracesLLVM ||
