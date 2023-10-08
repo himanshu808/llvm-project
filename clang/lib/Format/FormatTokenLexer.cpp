@@ -275,6 +275,18 @@ void FormatTokenLexer::tryMergePreviousTokens() {
         return;
       }
     }
+    else if (FormatTok->is(tok::l_brace)) {
+      if (tryMergeTokens({tok::l_square, tok::l_brace}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::l_square);
+        return;
+      }
+    }
+    else if (FormatTok->is(tok::r_square)) {
+      if (tryMergeTokens({tok::r_brace, tok::r_square}, TT_Unknown)) {
+        Tokens.back()->Tok.setKind(tok::r_square);
+        return;
+      }
+    }
     else if (FormatTok->TokenText.equals("define")) {
       if (tryMergeTokens({tok::hash, tok::identifier}, TT_Unknown)) {
         Tokens.back()->Tok.setKind(tok::identifier);
@@ -314,6 +326,18 @@ void FormatTokenLexer::tryMergePreviousTokens() {
       else if (tryMergeTokens({tok::exclaim, tok::kw_if}, TT_Unknown)) {
         Tokens.back()->Tok.setKind(tok::identifier);
         return;
+      }
+    }
+    else if (FormatTok->is(tok::numeric_constant)) {
+      if (Tokens.size() > 2) {
+        auto *tokEnd = Tokens.end();
+        if (tokEnd[-2]->isOneOf(tok::minus, tok::plus) && tokEnd[-3]->isNot(tok::numeric_constant)) {
+          if (tryMergeTokens({tok::minus, tok::numeric_constant}, TT_Unknown) ||
+          tryMergeTokens({tok::plus, tok::numeric_constant}, TT_Unknown)) {
+            Tokens.back()->Tok.setKind(tok::numeric_constant);
+            return;
+          }
+        }
       }
     }
   }
